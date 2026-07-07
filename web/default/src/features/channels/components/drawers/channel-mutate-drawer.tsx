@@ -143,6 +143,8 @@ import { useChannelMutateForm } from '../../hooks/use-channel-mutate-form'
 import {
   CHANNEL_FORM_DEFAULT_VALUES,
   CHANNEL_TYPE_ADVANCED_CUSTOM,
+  CHANNEL_TYPE_OPENAI_AGGREGATOR,
+  OPENAI_AGGREGATOR_PLACEHOLDER,
   channelFormSchema,
   channelsQueryKeys,
   getAdvancedCustomStats,
@@ -270,6 +272,7 @@ const SENSITIVE_FORM_FIELDS = [
   'settings',
   'setting',
   'advanced_custom',
+  'openai_aggregator',
   'is_enterprise_account',
   'vertex_key_type',
   'aws_key_type',
@@ -321,6 +324,7 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     hasConfiguredOverrideValue(values.param_override) ||
     hasConfiguredOverrideValue(values.header_override) ||
     values.advanced_custom?.trim() ||
+    values.openai_aggregator?.trim() ||
     hasConfiguredOverrideValue(values.status_code_mapping) ||
     values.tag?.trim() ||
     values.remark?.trim() ||
@@ -708,6 +712,7 @@ export function ChannelMutateDrawer({
   )
   const currentSettings = form.watch('settings')
   const currentAdvancedCustom = form.watch('advanced_custom')
+  const currentOpenAIAggregator = form.watch('openai_aggregator')
   const currentPriority = form.watch('priority')
   const currentWeight = form.watch('weight')
   const currentTestModel = form.watch('test_model')
@@ -762,7 +767,9 @@ export function ChannelMutateDrawer({
     multiKeyMode === 'batch' || multiKeyMode === 'multi_to_single'
   const isChannelDetailLoading = isEditing && isChannelLoading
   const supportsMultiKeyAddMode =
-    currentType !== 57 && !(currentType === 41 && vertexKeyType === 'api_key')
+    currentType !== 57 &&
+    currentType !== CHANNEL_TYPE_OPENAI_AGGREGATOR &&
+    !(currentType === 41 && vertexKeyType === 'api_key')
   const addModeOptions = useMemo(
     () =>
       supportsMultiKeyAddMode
@@ -867,7 +874,8 @@ export function ChannelMutateDrawer({
     formErrors.key_mode ||
     formErrors.vertex_key_type ||
     formErrors.aws_key_type ||
-    formErrors.azure_responses_version
+    formErrors.azure_responses_version ||
+    formErrors.openai_aggregator
   )
   const modelsHaveErrors = Boolean(
     formErrors.models || formErrors.group || formErrors.model_mapping
@@ -878,7 +886,9 @@ export function ChannelMutateDrawer({
   const providerRequiresOther = [3, 18, 21, 39, 41, 49].includes(currentType)
   const identityComplete = Boolean(currentName?.trim() && currentType > 0)
   const credentialsComplete = Boolean(
-    (isEditing || currentKey?.trim()) &&
+    (currentType === CHANNEL_TYPE_OPENAI_AGGREGATOR
+      ? currentOpenAIAggregator?.trim()
+      : isEditing || currentKey?.trim()) &&
     (!providerRequiresBaseUrl || currentBaseUrl?.trim()) &&
     (!providerRequiresOther || currentOther?.trim())
   )
@@ -1515,7 +1525,11 @@ export function ChannelMutateDrawer({
   const onSubmit = useCallback(
     async (data: ChannelFormValues) => {
       // Validate key is required when creating
-      if (!isEditing && !data.key?.trim()) {
+      if (
+        !isEditing &&
+        data.type !== CHANNEL_TYPE_OPENAI_AGGREGATOR &&
+        !data.key?.trim()
+      ) {
         form.setError('key', {
           type: 'manual',
           message: ERROR_MESSAGES.REQUIRED_KEY,
@@ -2616,7 +2630,7 @@ export function ChannelMutateDrawer({
                             )}
 
                             {/* General base_url for other types */}
-                            {![3, 8, 22, 36, 45].includes(currentType) && (
+                            {![3, 8, 22, 36, 45, CHANNEL_TYPE_OPENAI_AGGREGATOR].includes(currentType) && (
                               <FormField
                                 control={form.control}
                                 name='base_url'
@@ -2636,6 +2650,36 @@ export function ChannelMutateDrawer({
                                         'Custom API base URL. For official channels, New API has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
                                       )}
                                     </FormDescription>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            )}
+
+                            {currentType === CHANNEL_TYPE_OPENAI_AGGREGATOR && (
+                              <FormField
+                                control={form.control}
+                                name='openai_aggregator'
+                                render={({ field }) => (
+                                  <FormItem className='space-y-3 border-y py-4'>
+                                    <div className='space-y-1'>
+                                      <FormLabel>
+                                        {t('OpenAI Aggregator Upstreams *')}
+                                      </FormLabel>
+                                      <FormDescription>
+                                        {t(
+                                          'Configure upstreams as JSON. Each upstream needs a base_url and key. Requests will poll these upstreams.'
+                                        )}
+                                      </FormDescription>
+                                    </div>
+                                    <FormControl>
+                                      <Textarea
+                                        className='font-mono text-sm'
+                                        placeholder={OPENAI_AGGREGATOR_PLACEHOLDER}
+                                        rows={10}
+                                        {...field}
+                                      />
+                                    </FormControl>
                                     <FormMessage />
                                   </FormItem>
                                 )}
@@ -2835,7 +2879,12 @@ export function ChannelMutateDrawer({
                                   }
                                   return (
                                     <FormItem>
-                                      <FormLabel>{t('API Key *')}</FormLabel>
+                                      <FormLabel>
+                                        {currentType ===
+                                        CHANNEL_TYPE_OPENAI_AGGREGATOR
+                                          ? t('Channel placeholder key')
+                                          : t('API Key *')}
+                                      </FormLabel>
                                       <FormControl>
                                         <Textarea
                                           placeholder={keyPlaceholder}
@@ -2846,7 +2895,15 @@ export function ChannelMutateDrawer({
                                       <FormDescription>
                                         <div className='flex flex-col gap-2'>
                                           <span>{keyDescription}</span>
-                                          {isBatchMode && (
+                                           {currentType ===
+                                             CHANNEL_TYPE_OPENAI_AGGREGATOR && (
+                                             <span>
+                                               {t(
+                                                 'This value is only a placeholder for the channel record. Runtime requests use the upstream keys configured above.'
+                                               )}
+                                             </span>
+                                           )}
+                                           {isBatchMode && (
                                             <Button
                                               type='button'
                                               variant='outline'

@@ -31,6 +31,12 @@ import {
   stringifyAdvancedCustomConfig,
   validateAdvancedCustomConfig,
 } from './advanced-custom'
+import {
+  CHANNEL_TYPE_OPENAI_AGGREGATOR,
+  parseOpenAIAggregatorConfig,
+  stringifyOpenAIAggregatorConfig,
+  validateOpenAIAggregatorConfig,
+} from './openai-aggregator'
 
 // ============================================================================
 // Form Validation Schema
@@ -178,6 +184,7 @@ export const channelFormSchema = z
       .optional()
       .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
     advanced_custom: z.string().optional(),
+    openai_aggregator: z.string().optional(),
     other: z.string().optional(),
     // Multi-key options (not sent to backend directly)
     multi_key_mode: z.enum(['single', 'batch', 'multi_to_single']).optional(),
@@ -236,6 +243,32 @@ export const channelFormSchema = z
           ctx,
           'base_url',
           'Base URL is required when an advanced route uses an upstream path'
+        )
+      }
+    }
+
+    if (data.type === CHANNEL_TYPE_OPENAI_AGGREGATOR) {
+      let openAIAggregatorConfig
+      try {
+        openAIAggregatorConfig = parseOpenAIAggregatorConfig(
+          data.openai_aggregator
+        )
+      } catch {
+        addRequiredIssue(
+          ctx,
+          'openai_aggregator',
+          ERROR_MESSAGES.INVALID_JSON
+        )
+        return
+      }
+      const openAIAggregatorError = validateOpenAIAggregatorConfig(
+        openAIAggregatorConfig
+      )
+      if (openAIAggregatorError) {
+        addRequiredIssue(
+          ctx,
+          'openai_aggregator',
+          openAIAggregatorError.message
         )
       }
     }
@@ -349,6 +382,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   upstream_model_update_auto_sync_enabled: false,
   upstream_model_update_ignored_models: '',
   advanced_custom: '',
+  openai_aggregator: '',
 }
 
 // ============================================================================
@@ -405,6 +439,7 @@ export function transformChannelToFormDefaults(
   let upstreamModelUpdateAutoSyncEnabled = false
   let upstreamModelUpdateIgnoredModels = ''
   let advancedCustom = ''
+  let openAIAggregator = ''
 
   if (channel.settings) {
     try {
@@ -432,6 +467,11 @@ export function transformChannelToFormDefaults(
         : ''
       if (parsed.advanced_custom) {
         advancedCustom = stringifyAdvancedCustomConfig(parsed.advanced_custom)
+      }
+      if (parsed.openai_aggregator) {
+        openAIAggregator = stringifyOpenAIAggregatorConfig(
+          parsed.openai_aggregator
+        )
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -484,6 +524,7 @@ export function transformChannelToFormDefaults(
     upstream_model_update_auto_sync_enabled: upstreamModelUpdateAutoSyncEnabled,
     upstream_model_update_ignored_models: upstreamModelUpdateIgnoredModels,
     advanced_custom: advancedCustom,
+    openai_aggregator: openAIAggregator,
   }
 }
 
@@ -622,6 +663,17 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     delete settingsObj.advanced_custom
   }
 
+  if (formData.type === CHANNEL_TYPE_OPENAI_AGGREGATOR) {
+    const openAIAggregatorConfig = parseOpenAIAggregatorConfig(
+      formData.openai_aggregator
+    )
+    if (openAIAggregatorConfig) {
+      settingsObj.openai_aggregator = openAIAggregatorConfig
+    }
+  } else if ('openai_aggregator' in settingsObj) {
+    delete settingsObj.openai_aggregator
+  }
+
   return JSON.stringify(settingsObj)
 }
 
@@ -646,7 +698,10 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     name: formData.name,
     type: formData.type,
     base_url: normalizeBaseUrl(formData.base_url) || null,
-    key: formData.key,
+    key:
+      formData.type === CHANNEL_TYPE_OPENAI_AGGREGATOR
+        ? formData.key || 'openai-aggregator'
+        : formData.key,
     openai_organization: formData.openai_organization || null,
     models: formData.models,
     group: formatGroups(formData.group),
@@ -716,6 +771,8 @@ export function transformFormDataToUpdatePayload(
   // Only include key if it was changed (not empty)
   if (formData.key && formData.key.trim()) {
     payload.key = formData.key
+  } else if (formData.type === CHANNEL_TYPE_OPENAI_AGGREGATOR) {
+    payload.key = 'openai-aggregator'
   }
 
   // Clean up empty strings to null for optional fields

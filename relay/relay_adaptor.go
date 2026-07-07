@@ -63,6 +63,8 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &gemini.Adaptor{}
 	case constant.APITypeOpenAI:
 		return &openai.Adaptor{}
+	case constant.APITypeOpenAIAggregator:
+		return &openai.Adaptor{}
 	case constant.APITypePaLM:
 		return &palm.Adaptor{}
 	case constant.APITypeTencent:

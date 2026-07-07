@@ -161,7 +161,10 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if newAPIError := SetupContextForSelectedChannel(c, channel, modelRequest.Model); newAPIError != nil {
+			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, newAPIError.Error(), newAPIError.GetErrorCode())
+			return
+		}
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
@@ -479,6 +482,14 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	// c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", key))
 	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
+	if channel.Type == constant.ChannelTypeOpenAIAggregator {
+		upstream, upstreamErr := selectOpenAIAggregatorUpstream(channel)
+		if upstreamErr != nil {
+			return upstreamErr
+		}
+		common.SetContextKey(c, constant.ContextKeyChannelKey, strings.TrimSpace(upstream.Key))
+		common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, strings.TrimRight(strings.TrimSpace(upstream.BaseURL), "/"))
+	}
 
 	common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
 
@@ -502,6 +513,35 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		c.Set("bot_id", channel.Other)
 	}
 	return nil
+}
+
+func selectOpenAIAggregatorUpstream(channel *model.Channel) (dto.OpenAIAggregatorUpstream, *types.NewAPIError) {
+	settings := channel.GetOtherSettings()
+	config := settings.OpenAIAggregator
+	if config == nil || len(config.Upstreams) == 0 {
+		return dto.OpenAIAggregatorUpstream{}, types.NewError(errors.New("openai_aggregator upstreams are not configured"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+
+	lock := model.GetChannelPollingLock(channel.Id)
+	lock.Lock()
+	defer lock.Unlock()
+
+	channelInfo, err := model.CacheGetChannelInfo(channel.Id)
+	if err != nil {
+		return dto.OpenAIAggregatorUpstream{}, types.NewError(err, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+	start := channelInfo.MultiKeyPollingIndex
+	if start < 0 || start >= len(config.Upstreams) {
+		start = 0
+	}
+	selected := config.Upstreams[start]
+	nextIndex := (start + 1) % len(config.Upstreams)
+	channelInfo.MultiKeyPollingIndex = nextIndex
+	channel.ChannelInfo.MultiKeyPollingIndex = nextIndex
+	if !common.MemoryCacheEnabled {
+		_ = channel.SaveChannelInfo()
+	}
+	return selected, nil
 }
 
 // extractModelNameFromGeminiPath 从 Gemini API URL 路径中提取模型名

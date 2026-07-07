@@ -127,6 +127,13 @@ const PARAM_OVERRIDE_OPERATIONS_TEMPLATE = {
 };
 
 const DEPRECATED_DOUBAO_CODING_PLAN_BASE_URL = 'doubao-coding-plan';
+const OPENAI_AGGREGATOR_CHANNEL_TYPE = 59;
+const OPENAI_AGGREGATOR_TEMPLATE = {
+  upstreams: [
+    { base_url: 'https://api-a.example.com', key: 'sk-a' },
+    { base_url: 'https://api-b.example.com', key: 'sk-b' },
+  ],
+};
 
 // 支持并且已适配通过接口获取模型列表的渠道类型
 const MODEL_FETCHABLE_TYPES = new Set([
@@ -154,6 +161,8 @@ function type2secretPrompt(type) {
       return '按照如下格式输入: AccessKey|SecretAccessKey';
     case 57:
       return '请输入 JSON 格式的 OAuth 凭据（必须包含 access_token 和 account_id）';
+    case OPENAI_AGGREGATOR_CHANNEL_TYPE:
+      return '可选占位密钥；上游密钥请在下方聚合配置中设置';
     default:
       return '请输入渠道对应的鉴权密钥';
   }
@@ -179,6 +188,7 @@ const EditChannelModal = (props) => {
     model_mapping: '',
     param_override: '',
     status_code_mapping: '',
+    openai_aggregator: '',
     models: [],
     auto_ban: 1,
     test_model: '',
@@ -925,6 +935,9 @@ const EditChannelModal = (props) => {
           )
             ? parsedSettings.upstream_model_update_ignored_models.join(',')
             : '';
+          data.openai_aggregator = parsedSettings.openai_aggregator
+            ? JSON.stringify(parsedSettings.openai_aggregator, null, 2)
+            : '';
         } catch (error) {
           console.error('解析其他设置失败:', error);
           data.azure_responses_version = '';
@@ -944,6 +957,7 @@ const EditChannelModal = (props) => {
           data.upstream_model_update_last_check_time = 0;
           data.upstream_model_update_last_detected_models = [];
           data.upstream_model_update_ignored_models = '';
+          data.openai_aggregator = '';
         }
       } else {
         // 兼容历史数据：老渠道没有 settings 时，默认按 json 展示
@@ -962,6 +976,7 @@ const EditChannelModal = (props) => {
         data.upstream_model_update_last_check_time = 0;
         data.upstream_model_update_last_detected_models = [];
         data.upstream_model_update_ignored_models = '';
+        data.openai_aggregator = '';
       }
 
       if (
@@ -1638,6 +1653,13 @@ const EditChannelModal = (props) => {
       }
     }
 
+    if (
+      localInputs.type === OPENAI_AGGREGATOR_CHANNEL_TYPE &&
+      (!localInputs.key || localInputs.key.trim() === '')
+    ) {
+      localInputs.key = 'openai-aggregator';
+    }
+
     // 如果是编辑模式且 key 为空字符串，避免提交空值覆盖旧密钥
     if (isEdit && (!localInputs.key || localInputs.key.trim() === '')) {
       delete localInputs.key;
@@ -1778,6 +1800,58 @@ const EditChannelModal = (props) => {
       delete settings.vertex_key_type;
     }
 
+    if (localInputs.type === OPENAI_AGGREGATOR_CHANNEL_TYPE) {
+      if (
+        !localInputs.openai_aggregator ||
+        !verifyJSON(localInputs.openai_aggregator)
+      ) {
+        showInfo(t('聚合上游配置必须是合法的 JSON！'));
+        return;
+      }
+      let parsedAggregator;
+      try {
+        parsedAggregator = JSON.parse(localInputs.openai_aggregator);
+      } catch (error) {
+        showInfo(t('聚合上游配置必须是合法的 JSON！'));
+        return;
+      }
+      if (
+        !parsedAggregator ||
+        typeof parsedAggregator !== 'object' ||
+        Array.isArray(parsedAggregator) ||
+        !Array.isArray(parsedAggregator.upstreams) ||
+        parsedAggregator.upstreams.length === 0
+      ) {
+        showInfo(t('请至少配置一个聚合上游！'));
+        return;
+      }
+      for (let i = 0; i < parsedAggregator.upstreams.length; i += 1) {
+        const upstream = parsedAggregator.upstreams[i] || {};
+        const baseUrl = String(upstream.base_url || '').trim();
+        const key = String(upstream.key || '').trim();
+        if (!baseUrl || !key) {
+          showInfo(t('每个聚合上游都必须包含 base_url 和 key！'));
+          return;
+        }
+        try {
+          const parsedUrl = new URL(baseUrl);
+          if (
+            parsedUrl.protocol !== 'http:' &&
+            parsedUrl.protocol !== 'https:'
+          ) {
+            showInfo(t('聚合上游 base_url 必须使用 http 或 https！'));
+            return;
+          }
+        } catch (error) {
+          showInfo(t('聚合上游 base_url 必须是完整 URL！'));
+          return;
+        }
+      }
+      settings.openai_aggregator = parsedAggregator;
+    } else if ('openai_aggregator' in settings) {
+      delete settings.openai_aggregator;
+    }
+
     // type === 1 (OpenAI) 或 type === 14 (Claude): 设置字段透传控制（显式保存布尔值）
     if (
       localInputs.type === 1 ||
@@ -1850,6 +1924,7 @@ const EditChannelModal = (props) => {
     delete localInputs.upstream_model_update_last_check_time;
     delete localInputs.upstream_model_update_last_detected_models;
     delete localInputs.upstream_model_update_ignored_models;
+    delete localInputs.openai_aggregator;
 
     let res;
     localInputs.auto_ban = localInputs.auto_ban ? 1 : 0;
@@ -1975,7 +2050,10 @@ const EditChannelModal = (props) => {
     }
   };
 
-  const batchAllowed = (!isEdit || isMultiKeyChannel) && inputs.type !== 57;
+  const batchAllowed =
+    (!isEdit || isMultiKeyChannel) &&
+    inputs.type !== 57 &&
+    inputs.type !== OPENAI_AGGREGATOR_CHANNEL_TYPE;
   const batchExtra = batchAllowed ? (
     <Space>
       {!isEdit && (
@@ -3050,7 +3128,8 @@ const EditChannelModal = (props) => {
                                 : t(type2secretPrompt(inputs.type))
                             }
                             rules={
-                              isEdit
+                              isEdit ||
+                              inputs.type === OPENAI_AGGREGATOR_CHANNEL_TYPE
                                 ? []
                                 : [{ required: true, message: t('请输入密钥') }]
                             }
@@ -3216,6 +3295,37 @@ const EditChannelModal = (props) => {
                       />
                     )}
 
+                      {inputs.type === OPENAI_AGGREGATOR_CHANNEL_TYPE && (
+                        <JSONEditor
+                          key={`openai-aggregator-${isEdit ? channelId : 'new'}`}
+                          field='openai_aggregator'
+                          label={t('聚合上游配置')}
+                          placeholder={
+                            t(
+                              '请配置 OpenAI 兼容上游列表，每个上游都需要 base_url 和 key，例如：',
+                            ) +
+                            `\n${JSON.stringify(OPENAI_AGGREGATOR_TEMPLATE, null, 2)}`
+                          }
+                          value={inputs.openai_aggregator || ''}
+                          onChange={(value) =>
+                            handleInputChange('openai_aggregator', value)
+                          }
+                          rules={[
+                            {
+                              required: true,
+                              message: t('请填写聚合上游配置'),
+                            },
+                          ]}
+                          template={OPENAI_AGGREGATOR_TEMPLATE}
+                          templateLabel={t('填入模板')}
+                          editorType='openaiAggregator'
+                          formApi={formApiRef.current}
+                          extraText={t(
+                            '运行时会按轮询顺序请求这些上游；base_url 请填写上游根地址，末尾不要带 /v1 或 /。',
+                          )}
+                        />
+                      )}
+
                   {/* API Configuration Section */}
                   {showApiConfigCard && (
                     <div onClick={handleApiConfigSecretClick}>
@@ -3339,6 +3449,7 @@ const EditChannelModal = (props) => {
                         inputs.type !== 8 &&
                         inputs.type !== 22 &&
                         inputs.type !== 36 &&
+                        inputs.type !== OPENAI_AGGREGATOR_CHANNEL_TYPE &&
                         (inputs.type !== 45 || doubaoApiEditUnlocked) && (
                           <div>
                             <Form.Input

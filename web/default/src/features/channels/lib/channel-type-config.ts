@@ -144,6 +144,15 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'Models exposed by this channel',
     },
   },
+  59: {
+    id: 59,
+    name: CHANNEL_TYPES[59],
+    icon: 'openai',
+    hints: {
+      key: 'Optional placeholder key; upstream keys are configured below',
+      models: 'Models exposed by this aggregated channel',
+    },
+  },
 }
 
 /**

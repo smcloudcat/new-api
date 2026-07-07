@@ -957,8 +957,18 @@ func (channel *Channel) ValidateSettings() error {
 			return fmt.Errorf("advanced_custom is required")
 		}
 	}
+	if channel.Type == constant.ChannelTypeOpenAIAggregator {
+		if channelOtherSettings.OpenAIAggregator == nil {
+			return fmt.Errorf("openai_aggregator is required")
+		}
+	}
 	if channelOtherSettings.AdvancedCustom != nil {
 		if err := channelOtherSettings.AdvancedCustom.Validate(); err != nil {
+			return err
+		}
+	}
+	if channelOtherSettings.OpenAIAggregator != nil {
+		if err := channelOtherSettings.OpenAIAggregator.Validate(); err != nil {
 			return err
 		}
 	}

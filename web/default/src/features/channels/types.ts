@@ -107,6 +107,16 @@ export interface ChannelOtherSettings {
   upstream_model_update_last_check_time?: number
   upstream_model_update_last_detected_models?: string[]
   advanced_custom?: AdvancedCustomConfig
+  openai_aggregator?: OpenAIAggregatorConfig
+}
+
+export interface OpenAIAggregatorConfig {
+  upstreams?: OpenAIAggregatorUpstream[]
+}
+
+export interface OpenAIAggregatorUpstream {
+  base_url?: string
+  key?: string
 }
 
 export interface AdvancedCustomConfig {
